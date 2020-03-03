@@ -37,7 +37,7 @@ class BaseModule(framework.Framework):
             self.keys = {}
             for key in self.meta.get('required_keys'):
                 # add key to the database
-                self._query_keys('INSERT OR IGNORE INTO keys (name) VALUES (?)', (key,))
+                self._query_keys('INSERT IGNORE INTO mkeys (name) VALUES (%s)', (key,))
                 # migrate the old key if needed
                 self._migrate_key(key)
                 # add key to local keys dictionary
@@ -161,8 +161,10 @@ class BaseModule(framework.Framework):
             query = ' '.join(params.split()[1:]) if prefix == 'query' else query
             try:
                 results = self.query(query)
-            except sqlite3.OperationalError as e:
-                raise framework.FrameworkException(f"Invalid source query. {type(e).__name__} {e}")
+            except:
+                import traceback
+                traceback.print_exc()
+                raise
             if not results:
                 sources = []
             elif len(results[0]) > 1:
@@ -337,7 +339,7 @@ class BaseModule(framework.Framework):
         # update the dashboard before running the module
         # data is added at runtime, so even if an error occurs, any new items
         # must be accounted for by a module execution attempt
-        self.query(f"INSERT OR REPLACE INTO dashboard (module, runs) VALUES ('{self._modulename}', COALESCE((SELECT runs FROM dashboard WHERE module='{self._modulename}')+1, 1))")
+        #self.query(f"INSERT OR REPLACE INTO dashboard (module, runs) VALUES ('{self._modulename}', COALESCE((SELECT runs FROM dashboard WHERE module='{self._modulename}')+1, 1))")
         self.module_run(*params)
         self.module_post()
 

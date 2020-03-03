@@ -97,7 +97,7 @@ class Recon(framework.Framework):
         if not os.path.exists(self.home_path):
             os.makedirs(self.home_path)
         # initialize keys database
-        self._query_keys('CREATE TABLE IF NOT EXISTS keys (name TEXT PRIMARY KEY, value TEXT)')
+        self._query_keys('CREATE TABLE IF NOT EXISTS mkeys (name TEXT, value TEXT)')
         # initialize module index
         self._fetch_module_index()
 
@@ -195,11 +195,7 @@ class Recon(framework.Framework):
             return
         path = os.path.join(self.spaces_path, workspace)
         self.workspace = framework.Framework.workspace = path
-        if not os.path.exists(path):
-            os.makedirs(path)
-            self._create_db()
-        else:
-            self._migrate_db()
+        self._create_db()
         # set workspace prompt
         self.prompt = self._prompt_template.format(self._base_prompt[:-3], self.workspace.split('/')[-1])
         # load workspace configuration
@@ -247,8 +243,8 @@ class Recon(framework.Framework):
         self.query('CREATE TABLE IF NOT EXISTS pushpins (source TEXT, screen_name TEXT, profile_name TEXT, profile_url TEXT, media_url TEXT, thumb_url TEXT, message TEXT, latitude TEXT, longitude TEXT, time TEXT, notes TEXT, module TEXT)')
         self.query('CREATE TABLE IF NOT EXISTS profiles (username TEXT, resource TEXT, url TEXT, category TEXT, notes TEXT, module TEXT)')
         self.query('CREATE TABLE IF NOT EXISTS repositories (name TEXT, owner TEXT, description TEXT, resource TEXT, category TEXT, url TEXT, notes TEXT, module TEXT)')
-        self.query('CREATE TABLE IF NOT EXISTS dashboard (module TEXT PRIMARY KEY, runs INT)')
-        self.query('PRAGMA user_version = 10')
+        self.query('CREATE TABLE IF NOT EXISTS dashboard (module TEXT , runs INT)')
+        #self.query('PRAGMA user_version = 10')
 
     def _migrate_db(self):
         db_version = lambda self: self.query('PRAGMA user_version')[0][0]

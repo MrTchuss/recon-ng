@@ -8,7 +8,7 @@ import random
 import re
 import requests
 import socket
-import sqlite3
+import mysql.connector
 import string
 import subprocess
 import sys
@@ -366,31 +366,36 @@ class Framework(cmd.Cmd):
         '''Queries the database and returns the results as a list.'''
         self.debug(f"DATABASE => {path}")
         self.debug(f"QUERY => {query}")
-        with sqlite3.connect(path) as conn:
-            with closing(conn.cursor()) as cur:
-                if values:
-                    self.debug(f"VALUES => {repr(values)}")
-                    cur.execute(query, values)
-                else:
-                    cur.execute(query)
-                # a rowcount of -1 typically refers to a select statement
-                if cur.rowcount == -1:
-                    rows = []
-                    if include_header:
-                        rows.append(tuple([x[0] for x in cur.description]))
-                    rows.extend(cur.fetchall())
-                    results = rows
-                # a rowcount of 1 == success and 0 == failure
-                else:
-                    conn.commit()
-                    results = cur.rowcount
-                return results
+        if path == 'keys':
+            dbname = 'recon_keys'
+        else:
+            dbname='recon_ng'
+        conn = mysql.connector.connect(user='root', password='root', host='localhost', database=dbname)
+        with closing(conn.cursor()) as cur:
+            if values:
+                self.debug(f"VALUES => {repr(values)}")
+                cur.execute(query, values)
+            else:
+                cur.execute(query)
+            # a rowcount of -1 typically refers to a select statement
+            if cur.rowcount == -1:
+                rows = []
+                if include_header:
+                    rows.append(tuple([x[0] for x in cur.description]))
+                rows.extend(cur.fetchall())
+                results = rows
+            # a rowcount of 1 == success and 0 == failure
+            else:
+                conn.commit()
+                results = cur.rowcount
+            conn.close()
+            return results
 
     def get_columns(self, table):
-        return [(x[1], x[2]) for x in self.query(f"PRAGMA table_info('{table}')")]
+        return [(x[0], x[1]) for x in self.query("describe {}".format(table))]
 
     def get_tables(self):
-        return [x[0] for x in self.query('SELECT name FROM sqlite_master WHERE type=\'table\'') if x[0] not in ['dashboard']]
+        return [x[0] for x in self.query('SHOW TABLES') if x[0] not in ['dashboard']]
 
     #==================================================
     # INSERT METHODS
@@ -629,8 +634,8 @@ class Framework(cmd.Cmd):
 
         # build the insert query
         columns_str = '`, `'.join(columns)
-        placeholder_str = ', '.join('?'*len(columns))
-        unique_columns_str = ' and '.join([f"`{column}`=?" for column in unique_columns])
+        placeholder_str = ', '.join(['%s']*len(columns))
+        unique_columns_str = ' and '.join([f"`{column}`=%s" for column in unique_columns])
         if not unique_columns:
             query = f"INSERT INTO `{table}` (`{columns_str}`) VALUES ({placeholder_str})"
         else:
@@ -743,31 +748,31 @@ class Framework(cmd.Cmd):
     #==================================================
 
     def get_key(self, name):
-        rows = self._query_keys('SELECT value FROM keys WHERE name=? AND value NOT NULL', (name,))
+        rows = self._query_keys('SELECT value FROM mkeys WHERE name=%s AND value IS NOT NULL', (name,))
         if not rows:
             return None
         return rows[0][0]
 
     def add_key(self, name, value):
-        result = self._query_keys('UPDATE keys SET value=? WHERE name=?', (value, name))
+        result = self._query_keys('UPDATE mkeys SET value=%s WHERE name=%s', (value, name))
         if not result:
-            return self._query_keys('INSERT INTO keys VALUES (?, ?)', (name, value))
+            return self._query_keys('INSERT INTO mkeys VALUES (%s, %s)', (name, value))
         return result
 
     def remove_key(self, name):
         #return self._query_keys('UPDATE keys SET value=NULL WHERE name=?', (name,))
-        return self._query_keys('DELETE FROM keys WHERE name=?', (name,))
+        return self._query_keys('DELETE FROM mkeys WHERE name=%s', (name,))
 
     def _query_keys(self, query, values=()):
         path = os.path.join(self.home_path, 'keys.db')
-        result = self._query(path, query, values)
+        result = self._query('keys', query, values)
         # filter out tokens when not called from the get_key method
         if type(result) is list and 'get_key' not in [x[3] for x in inspect.stack()]:
             result = [x for x in result if not x[0].endswith('_token')]
         return result
 
     def _list_keys(self):
-        keys = self._query_keys('SELECT * FROM keys')
+        keys = self._query_keys('SELECT * FROM mkeys')
         tdata = []
         for key in sorted(keys):
             tdata.append(key)
@@ -775,7 +780,7 @@ class Framework(cmd.Cmd):
             self.table(tdata, header=['Name', 'Value'])
 
     def _get_key_names(self):
-        return [x[0] for x in self._query_keys('SELECT name FROM keys')]
+        return [x[0] for x in self._query_keys('SELECT name FROM mkeys')]
 
     #==================================================
     # REQUEST METHODS
@@ -1009,7 +1014,7 @@ class Framework(cmd.Cmd):
         if arg in self._get_show_names():
             getattr(self, 'show_' + arg)()
         elif arg in self.get_tables():
-            self.do_db(f"query SELECT ROWID, * FROM `{arg}`")
+            self.do_db(f"query SELECT * FROM `{arg}`")
         else:
             self.help_show()
 
@@ -1052,7 +1057,7 @@ class Framework(cmd.Cmd):
             # delete record(s) from the database
             count = 0
             for rowid in rowids:
-                count += self.query(f"UPDATE `{table}` SET notes=? WHERE ROWID IS ?", (note, rowid))
+                count += self.query(f"UPDATE `{table}` SET notes=%s WHERE ROWID IS %d", (note, rowid))
             self.output(f"{count} rows affected.")
         else:
             self.output('Invalid table name.')
@@ -1131,7 +1136,7 @@ class Framework(cmd.Cmd):
             # delete record(s) from the database
             count = 0
             for rowid in rowids:
-                count += self.query(f"DELETE FROM `{table}` WHERE ROWID IS ?", (rowid,))
+                count += self.query(f"DELETE FROM `{table}` WHERE ROWID IS %d", (rowid,))
             self.output(f"{count} rows affected.")
         else:
             self.output('Invalid table name.')
@@ -1143,8 +1148,9 @@ class Framework(cmd.Cmd):
             return
         try:
             results = self.query(params, include_header=True)
-        except sqlite3.OperationalError as e:
-            self.error(f"Invalid query. {type(e).__name__} {e}")
+        except:
+            import traceback
+            traceback.print_exc()
             return
         if type(results) == list:
             header = results.pop(0)
